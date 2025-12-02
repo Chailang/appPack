@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APP打包工具</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📦 APP打包工具</h1>
+            <p class="subtitle">支持Android和iOS Release版本打包</p>
+            <div class="header-buttons">
+                <button type="button" id="configBtn" class="btn-restart" title="管理路径配置">⚙️ 路径配置</button>
+                <button type="button" id="restartBtn" class="btn-restart" title="显示重启服务器命令">🔄 重启服务器</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="card">
+                <h2>项目配置</h2>
+                
+                <div class="form-group">
+                    <label for="projectPath">项目路径：</label>
+                    <div class="path-input-group">
+                        <input 
+                            type="text" 
+                            id="projectPath" 
+                            placeholder="请输入或选择项目路径，例如: /Users/username/projects/myapp"
+                            value=""
+                        >
+                        <button type="button" id="browseBtn" class="btn-secondary">选择</button>
+                    </div>
+                    <small class="hint">支持拖拽文件夹到输入框</small>
+                </div>
+
+                <div class="form-group">
+                    <button type="button" id="checkBtn" class="btn-primary">检查项目</button>
+                </div>
+
+                <div id="projectInfo" class="project-info hidden">
+                    <h3>项目信息</h3>
+                    <div id="projectTypes" class="project-types"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>打包选项</h2>
+                
+                <div class="form-group">
+                    <label for="outputPath">输出包文件夹：</label>
+                    <div class="path-input-group">
+                        <input 
+                            type="text" 
+                            id="outputPath" 
+                            placeholder="请输入输出包文件夹路径，例如: /Users/username/outputs"
+                            value=""
+                        >
+                        <button type="button" id="browseOutputBtn" class="btn-secondary">选择</button>
+                    </div>
+                    <small class="hint">打包文件将按日期自动创建子文件夹</small>
+                </div>
+
+                <div class="form-group">
+                    <label>打包类型：</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="buildType" value="android" checked>
+                            <span>仅Android</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="buildType" value="ios">
+                            <span>仅iOS</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="buildType" value="both">
+                            <span>Android + iOS</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <button type="button" id="buildBtn" class="btn-build" disabled>开始打包</button>
+                </div>
+            </div>
+
+            <div class="card" id="outputCard" style="display: none;">
+                <h2>打包输出</h2>
+                <div id="progressBar" class="progress-bar" style="display: none;">
+                    <div class="progress-bar-fill" id="progressFill"></div>
+                </div>
+                <div id="progressText" class="progress-text"></div>
+                <div id="output" class="output"></div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+

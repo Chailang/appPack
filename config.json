@@ -1,0 +1,11 @@
+{
+  "projectBasePath": "/Users/chaiweidong/Desktop/jucom-work/project",
+  "outputBasePath": "/Users/chaiweidong/Desktop/jucom-work/project/打包工具",
+  "projectPaths": [
+    "/Users/chaiweidong/Desktop/jucom-work/project/"
+  ],
+  "outputPaths": [
+    "/Users/chaiweidong/Desktop/jucom-work/project/打包工具/output",
+    "/Users/chaiweidong/Desktop/jucom-work/tool/打包工具/output"
+  ]
+}

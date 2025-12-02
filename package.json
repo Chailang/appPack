@@ -1,0 +1,26 @@
+{
+  "name": "app-packaging-tool",
+  "version": "1.0.0",
+  "description": "本地APP打包工具，支持Android和iOS release打包",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "android",
+    "ios",
+    "packaging",
+    "build"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+
