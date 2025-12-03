@@ -205,16 +205,17 @@ function buildAndroidWithProgress(projectPath, outputPath, sessionId, callback) 
   // 确保gradlew有执行权限
   fs.chmodSync(gradlewPath, '755');
 
-  // 构建打包命令
+  // 构建打包命令 - 只打包 JcApkRelease 变体
   const buildCommand = process.platform === 'win32' 
-    ? `${gradlewPath} clean assembleRelease bundleRelease`
-    : `./gradlew clean assembleRelease bundleRelease`;
+    ? `${gradlewPath} clean assembleJcApkRelease bundleJcApkRelease`
+    : `./gradlew clean assembleJcApkRelease bundleJcApkRelease`;
 
   addLog('info', `开始执行Android打包命令: ${buildCommand}`);
   addLog('info', `工作目录: ${androidPath}`);
+  addLog('info', '打包变体: JcApkRelease');
 
   // 使用spawn实时输出
-  const args = ['clean', 'assembleRelease', 'bundleRelease'];
+  const args = ['clean', 'assembleJcApkRelease', 'bundleJcApkRelease'];
   const gradleProcess = spawn('./gradlew', args, {
     cwd: androidPath,
     env: { ...process.env, TERM: 'xterm-color' }
@@ -363,12 +364,10 @@ function buildAndroid(projectPath, outputPath, callback) {
   // 确保gradlew有执行权限
   fs.chmodSync(gradlewPath, '755');
 
-  // 构建打包命令 - 打包所有Release变体
-  // assembleRelease 会打包所有变体的release版本
-  // 使用 assembleRelease 而不是 assembleRelease，因为 assembleRelease 会打包所有变体
+  // 构建打包命令 - 只打包 JcApkRelease 变体
   const buildCommand = process.platform === 'win32' 
-    ? `${gradlewPath} clean assembleRelease bundleRelease`
-    : `./gradlew clean assembleRelease bundleRelease`;
+    ? `${gradlewPath} clean assembleJcApkRelease bundleJcApkRelease`
+    : `./gradlew clean assembleJcApkRelease bundleJcApkRelease`;
 
   console.log('========================================');
   console.log('开始执行Android打包命令');
@@ -1359,48 +1358,71 @@ function pullLatestCode(projectPath, sessionId, callback) {
   // 读取配置获取 Git passphrase
   const config = readConfig();
   const gitPassphrase = config.gitPassphrase || '712712';
+  addLog('info', `已读取 Git passphrase 配置`);
 
-  // 执行git pull
-  const gitProcess = spawn('git', ['pull'], {
+  // 创建 expect 脚本来自动输入密码
+  const expectScriptPath = path.join(__dirname, 'git-pull-expect.sh');
+  const expectScriptContent = `#!/usr/bin/expect -f
+set timeout 30
+set passphrase "${gitPassphrase}"
+
+spawn git pull
+expect {
+    "Enter passphrase for key" {
+        send "$passphrase\\r"
+        exp_continue
+    }
+    "passphrase for key" {
+        send "$passphrase\\r"
+        exp_continue
+    }
+    eof
+}
+`;
+
+  try {
+    fs.writeFileSync(expectScriptPath, expectScriptContent, { mode: 0o755 });
+    addLog('info', '已创建 expect 脚本');
+  } catch (error) {
+    addLog('warning', `创建 expect 脚本失败: ${error.message}，将使用直接方式`);
+  }
+
+  // 使用 expect 脚本执行 git pull
+  const gitProcess = spawn('/usr/bin/expect', ['-f', expectScriptPath], {
     cwd: projectPath,
-    env: { ...process.env, TERM: 'xterm-color' },
-    stdio: ['pipe', 'pipe', 'pipe'] // 明确指定 stdio，以便能够写入 stdin
+    env: { 
+      ...process.env, 
+      TERM: 'xterm-color'
+    },
+    stdio: ['pipe', 'pipe', 'pipe']
   });
 
   let stdout = '';
   let stderr = '';
-  let passphraseSent = false; // 标记是否已发送密码
 
   gitProcess.stdout.on('data', (data) => {
     const text = data.toString();
     stdout += text;
     addLog('output', text);
-    
-    // stdout 中也可能包含密码提示（某些情况下）
-    if (text.includes('Enter passphrase for key') && !passphraseSent) {
-      addLog('info', '检测到需要输入 Git passphrase，自动输入...');
-      passphraseSent = true;
-      // 输入密码并回车
-      gitProcess.stdin.write(gitPassphrase + '\n');
-    }
   });
 
   gitProcess.stderr.on('data', (data) => {
     const text = data.toString();
     stderr += text;
-    
-    // 检查是否需要输入密码
-    if (text.includes('Enter passphrase for key') && !passphraseSent) {
-      addLog('info', '检测到需要输入 Git passphrase，自动输入...');
-      passphraseSent = true;
-      // 输入密码并回车
-      gitProcess.stdin.write(gitPassphrase + '\n');
-    } else {
-      addLog('error', text);
-    }
+    addLog('error', text);
   });
 
   gitProcess.on('close', (code) => {
+    // 清理 expect 脚本
+    try {
+      if (fs.existsSync(expectScriptPath)) {
+        fs.unlinkSync(expectScriptPath);
+        addLog('info', '已清理 expect 脚本');
+      }
+    } catch (error) {
+      // 忽略清理错误
+    }
+    
     if (code !== 0) {
       addLog('error', `Git pull失败，退出代码: ${code}`);
       addLog('error', `错误输出: ${stderr}`);
