@@ -84,7 +84,7 @@ function displayProjectInfo(types, projectInfoData = {}) {
     projectTypes.innerHTML = '';
 
     if (types.length === 0) {
-        projectTypes.innerHTML = '<p style="color: #f48771;">未检测到Android或iOS项目</p>';
+        projectTypes.innerHTML = '<p style="color: #f48771;">未检测到Android、iOS或Flutter项目</p>';
         return;
     }
 
@@ -308,7 +308,10 @@ async function showPathSelector(type, currentValue) {
         }
 
         const config = data.config;
-        const basePath = type === 'project' ? config.projectBasePath : config.outputBasePath;
+        // 对于输出路径，使用固定的output目录路径
+        const basePath = type === 'project' 
+            ? config.projectBasePath 
+            : '/Users/chaiweidong/Desktop/jucom-work/tool/打包工具/output';
         const paths = type === 'project' ? config.projectPaths : config.outputPaths;
         const title = type === 'project' ? '选择项目路径' : '选择输出包文件夹路径';
         const placeholder = type === 'project' 
@@ -403,36 +406,11 @@ async function showPathSelector(type, currentValue) {
             `;
         }
         
-        // 为输出目录和项目路径添加输入目录获取子目录的功能（统一逻辑）
-        let browseDirectoryHtml = '';
-        browseDirectoryHtml = `
-            <div style="margin-bottom: 20px; padding: 15px; background: #f8f9ff; border-radius: 8px; border: 2px solid #e0e0e0;">
-                <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #555;">📂 输入目录获取子目录：</label>
-                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                    <input type="text" id="browseDirectoryInput" 
-                           placeholder="请输入目录路径，例如: /Users/username/${type === 'project' ? 'projects' : 'outputs'}" 
-                           style="flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                    <button id="browseDirectoryBtn" style="padding: 12px 20px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; white-space: nowrap;">获取子目录</button>
-                </div>
-                <div id="browseDirectoryResult" style="margin-top: 10px;"></div>
-            </div>
-        `;
-        
         modalContent.innerHTML = `
             <h2 style="color: #667eea; margin-bottom: 20px;">${title}</h2>
-            ${browseDirectoryHtml}
             ${directoriesHtml}
             ${pathsHtml}
-            <div style="margin-bottom: 20px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #555;">或输入完整路径：</label>
-                <input type="text" id="newPathInput" 
-                       placeholder="${placeholder}" 
-                       value="${currentValue || ''}"
-                       style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-            </div>
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="saveAndSelectBtn" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">保存并选择</button>
-                <button id="selectOnlyBtn" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">仅选择</button>
                 <button id="cancelPathBtn" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">取消</button>
             </div>
         `;
@@ -440,75 +418,8 @@ async function showPathSelector(type, currentValue) {
         modal.appendChild(modalContent);
         document.body.appendChild(modal);
         
-        let selectedPath = null;
-        
-        // 为项目路径和输出路径添加获取子目录的功能（统一逻辑）
-        const browseDirectoryBtn = document.getElementById('browseDirectoryBtn');
-        const browseDirectoryInput = document.getElementById('browseDirectoryInput');
-        const browseDirectoryResult = document.getElementById('browseDirectoryResult');
-        
-        browseDirectoryBtn.addEventListener('click', async () => {
-            const directoryPath = browseDirectoryInput.value.trim();
-            if (!directoryPath) {
-                alert('请输入目录路径');
-                return;
-            }
-            
-            browseDirectoryBtn.disabled = true;
-            browseDirectoryBtn.textContent = '获取中...';
-            browseDirectoryResult.innerHTML = '<div style="color: #667eea; padding: 10px;">正在获取子目录...</div>';
-            
-            try {
-                const dirResponse = await fetch(`${API_BASE}/directories?basePath=${encodeURIComponent(directoryPath)}`);
-                const dirData = await dirResponse.json();
-                
-                if (dirData.success && dirData.directories.length > 0) {
-                    const directories = dirData.directories;
-                    browseDirectoryResult.innerHTML = `
-                        <div style="margin-top: 10px;">
-                            <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #555;">
-                                目录: <span style="font-family: monospace; font-size: 12px; color: #667eea;">${escapeHtml(directoryPath)}</span>
-                            </label>
-                            <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #555;">子目录列表：</label>
-                            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; padding: 10px;">
-                                ${directories.map((dir) => {
-                                    const escapedPath = dir.fullPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                                    return `
-                                    <div style="padding: 12px; background: #f8f9ff; border: 2px solid #e0e0e0; border-radius: 6px; cursor: pointer; transition: all 0.2s; text-align: center;" 
-                                         onmouseover="this.style.background='#667eea'; this.style.color='white'; this.style.borderColor='#667eea'" 
-                                         onmouseout="this.style.background='#f8f9ff'; this.style.color='inherit'; this.style.borderColor='#e0e0e0'"
-                                         onclick="selectDirectory('${escapedPath}')">
-                                        <div style="font-weight: 600; font-size: 14px;">📁 ${escapeHtml(dir.name)}</div>
-                                        <div style="font-size: 11px; color: #999; margin-top: 4px; word-break: break-all;">${escapeHtml(dir.path)}</div>
-                                    </div>
-                                `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    browseDirectoryResult.innerHTML = `<div style="color: #f48771; padding: 10px;">${dirData.error || '该目录下没有子目录'}</div>`;
-                }
-            } catch (error) {
-                console.error('获取目录列表失败:', error);
-                browseDirectoryResult.innerHTML = `<div style="color: #f48771; padding: 10px;">获取目录列表失败: ${error.message}</div>`;
-            } finally {
-                browseDirectoryBtn.disabled = false;
-                browseDirectoryBtn.textContent = '获取子目录';
-            }
-        });
-        
-        // 支持回车键获取子目录
-        browseDirectoryInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                browseDirectoryBtn.click();
-            }
-        });
-        
         // 选择子目录函数
         window.selectDirectory = (fullPath) => {
-            selectedPath = fullPath;
-            document.getElementById('newPathInput').value = fullPath;
             // 自动选择
             if (type === 'project') {
                 projectPathInput.value = fullPath;
@@ -520,57 +431,14 @@ async function showPathSelector(type, currentValue) {
         
         // 选择路径函数
         window.selectPath = (path) => {
-            selectedPath = path;
-            document.getElementById('newPathInput').value = path;
-        };
-        
-        // 保存并选择
-        document.getElementById('saveAndSelectBtn').addEventListener('click', async () => {
-            const newPath = document.getElementById('newPathInput').value.trim();
-            if (!newPath) {
-                alert('请输入路径');
-                return;
-            }
-            
-            try {
-                // 添加到配置
-                const addResponse = await fetch(`${API_BASE}/config/add-path`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type, path: newPath })
-                });
-                
-                if (addResponse.ok) {
-                    selectedPath = newPath;
-                    if (type === 'project') {
-                        projectPathInput.value = newPath;
-                    } else {
-                        outputPathInput.value = newPath;
-                    }
-                    document.body.removeChild(modal);
-                } else {
-                    throw new Error('保存路径失败');
-                }
-            } catch (error) {
-                alert('保存路径失败: ' + error.message);
-            }
-        });
-        
-        // 仅选择（不保存）
-        document.getElementById('selectOnlyBtn').addEventListener('click', () => {
-            const newPath = document.getElementById('newPathInput').value.trim();
-            if (!newPath) {
-                alert('请输入路径');
-                return;
-            }
-            
+            // 自动选择
             if (type === 'project') {
-                projectPathInput.value = newPath;
+                projectPathInput.value = path;
             } else {
-                outputPathInput.value = newPath;
+                outputPathInput.value = path;
             }
             document.body.removeChild(modal);
-        });
+        };
         
         // 取消
         document.getElementById('cancelPathBtn').addEventListener('click', () => {

@@ -36,7 +36,10 @@ function detectProjectType(projectPath) {
         const hasPubspec = fs.existsSync(path.join(dirPath, 'pubspec.yaml'));
         if (hasPubspec) {
           projectInfo.flutter = entry.name;
-          // Flutter项目不单独添加到types，因为它只是依赖
+          // 如果检测到flutter_jc，将其识别为Flutter项目
+          if (dirName === 'flutter_jc') {
+            types.push('flutter');
+          }
         }
       }
       
@@ -1067,7 +1070,8 @@ function readConfig() {
     projectBasePath: '',
     outputBasePath: '',
     projectPaths: [],
-    outputPaths: []
+    outputPaths: [],
+    gitPassphrase: '712712'
   };
 }
 
@@ -1095,12 +1099,15 @@ app.get('/api/config', (req, res) => {
 // API路由：更新配置
 app.post('/api/config', (req, res) => {
   try {
-    const { projectBasePath, outputBasePath, projectPaths, outputPaths } = req.body;
+    const { projectBasePath, outputBasePath, projectPaths, outputPaths, gitPassphrase } = req.body;
+    // 读取现有配置，保留 gitPassphrase
+    const existingConfig = readConfig();
     const config = {
       projectBasePath: projectBasePath || '',
       outputBasePath: outputBasePath || '',
       projectPaths: projectPaths || [],
-      outputPaths: outputPaths || []
+      outputPaths: outputPaths || [],
+      gitPassphrase: gitPassphrase !== undefined ? gitPassphrase : (existingConfig.gitPassphrase || '712712')
     };
     if (saveConfig(config)) {
       res.json({ success: true, message: '配置已保存' });
@@ -1342,32 +1349,55 @@ function pullLatestCode(projectPath, sessionId, callback) {
   // 检查是否是git仓库
   const gitDir = path.join(projectPath, '.git');
   if (!fs.existsSync(gitDir)) {
-    addLog('info', '项目不是Git仓库，跳过代码拉取');
-    return callback(null, '项目不是Git仓库');
+    addLog('info', `路径不是Git仓库，跳过代码拉取: ${projectPath}`);
+    return callback(null, `路径不是Git仓库: ${projectPath}`);
   }
 
   addLog('info', '开始拉取最新代码...');
   addLog('info', `Git仓库路径: ${projectPath}`);
 
+  // 读取配置获取 Git passphrase
+  const config = readConfig();
+  const gitPassphrase = config.gitPassphrase || '712712';
+
   // 执行git pull
   const gitProcess = spawn('git', ['pull'], {
     cwd: projectPath,
-    env: { ...process.env, TERM: 'xterm-color' }
+    env: { ...process.env, TERM: 'xterm-color' },
+    stdio: ['pipe', 'pipe', 'pipe'] // 明确指定 stdio，以便能够写入 stdin
   });
 
   let stdout = '';
   let stderr = '';
+  let passphraseSent = false; // 标记是否已发送密码
 
   gitProcess.stdout.on('data', (data) => {
     const text = data.toString();
     stdout += text;
     addLog('output', text);
+    
+    // stdout 中也可能包含密码提示（某些情况下）
+    if (text.includes('Enter passphrase for key') && !passphraseSent) {
+      addLog('info', '检测到需要输入 Git passphrase，自动输入...');
+      passphraseSent = true;
+      // 输入密码并回车
+      gitProcess.stdin.write(gitPassphrase + '\n');
+    }
   });
 
   gitProcess.stderr.on('data', (data) => {
     const text = data.toString();
     stderr += text;
-    addLog('error', text);
+    
+    // 检查是否需要输入密码
+    if (text.includes('Enter passphrase for key') && !passphraseSent) {
+      addLog('info', '检测到需要输入 Git passphrase，自动输入...');
+      passphraseSent = true;
+      // 输入密码并回车
+      gitProcess.stdin.write(gitPassphrase + '\n');
+    } else {
+      addLog('error', text);
+    }
   });
 
   gitProcess.on('close', (code) => {
@@ -1389,6 +1419,13 @@ function pullLatestCode(projectPath, sessionId, callback) {
     // Git pull出错不影响打包，继续执行
     addLog('warning', 'Git pull出错，但将继续执行打包');
     callback(null, `Git pull出错，但将继续打包: ${error.message}`);
+  });
+  
+  // 确保 stdin 在进程结束时关闭
+  gitProcess.on('exit', () => {
+    if (gitProcess.stdin && !gitProcess.stdin.destroyed) {
+      gitProcess.stdin.end();
+    }
   });
 }
 
@@ -1460,6 +1497,18 @@ function startBuild(sessionId) {
   const flutterPath = detectionResult.projectInfo.flutter 
     ? path.join(projectPath, detectionResult.projectInfo.flutter)
     : null;
+  
+  // 查找iOS项目目录（如果需要打包iOS）
+  const iosDirName = (buildType === 'ios' || buildType === 'both') 
+    ? findIOSDirectory(projectPath) 
+    : null;
+  const iosPath = iosDirName ? path.join(projectPath, iosDirName) : null;
+  
+  // 查找Android项目目录（如果需要打包Android）
+  const androidDirName = (buildType === 'android' || buildType === 'both') 
+    ? findAndroidDirectory(projectPath) 
+    : null;
+  const androidPath = androidDirName ? path.join(projectPath, androidDirName) : null;
 
   // 先拉取最新代码，然后再开始打包
   addLog('info', '准备开始打包，先拉取最新代码...');
@@ -1475,30 +1524,143 @@ function startBuild(sessionId) {
         addLog('success', 'Flutter代码拉取完成');
       }
       
-      // Flutter代码拉取完成后，再拉取项目根目录的代码（如果项目根目录也是git仓库）
-      pullLatestCode(projectPath, sessionId, (error, output) => {
-        if (error) {
-          addLog('error', `拉取项目代码时出错: ${error.message}`);
-          // 即使拉取失败，也继续打包
+      // 拉取平台代码的函数
+      const pullPlatformCode = () => {
+        // 如果需要打包iOS，先拉取iOS代码
+        if (iosPath) {
+          addLog('info', `开始拉取iOS代码: ${iosPath}`);
+          pullLatestCode(iosPath, sessionId, (error, output) => {
+            if (error) {
+              addLog('error', `拉取iOS代码时出错: ${error.message}`);
+              // 即使拉取失败，也继续打包
+            } else {
+              addLog('success', 'iOS代码拉取完成');
+            }
+            
+            // iOS代码拉取完成后，如果需要打包Android，拉取Android代码
+            if (androidPath) {
+              addLog('info', `开始拉取Android代码: ${androidPath}`);
+              pullLatestCode(androidPath, sessionId, (error, output) => {
+                if (error) {
+                  addLog('error', `拉取Android代码时出错: ${error.message}`);
+                  // 即使拉取失败，也继续打包
+                } else {
+                  addLog('success', 'Android代码拉取完成');
+                }
+                
+                addLog('info', '代码拉取完成，开始打包...');
+                updateProgress(10); // Git pull完成后，进度设为10%
+                startActualBuild();
+              });
+            } else {
+              // 不需要打包Android，直接开始打包
+              addLog('info', '代码拉取完成，开始打包...');
+              updateProgress(10); // Git pull完成后，进度设为10%
+              startActualBuild();
+            }
+          });
+        } else if (androidPath) {
+          // 不需要打包iOS，但需要打包Android，拉取Android代码
+          addLog('info', `开始拉取Android代码: ${androidPath}`);
+          pullLatestCode(androidPath, sessionId, (error, output) => {
+            if (error) {
+              addLog('error', `拉取Android代码时出错: ${error.message}`);
+              // 即使拉取失败，也继续打包
+            } else {
+              addLog('success', 'Android代码拉取完成');
+            }
+            
+            addLog('info', '代码拉取完成，开始打包...');
+            updateProgress(10); // Git pull完成后，进度设为10%
+            startActualBuild();
+          });
+        } else {
+          // 不需要打包iOS和Android，拉取项目根目录代码（如果项目根目录也是git仓库）
+          addLog('info', `开始拉取项目根目录代码: ${projectPath}`);
+          pullLatestCode(projectPath, sessionId, (error, output) => {
+            if (error) {
+              addLog('error', `拉取项目根目录代码时出错: ${error.message}`);
+              // 即使拉取失败，也继续打包
+            }
+            
+            addLog('info', '代码拉取完成，开始打包...');
+            updateProgress(10); // Git pull完成后，进度设为10%
+            startActualBuild();
+          });
         }
-        
-        addLog('info', '代码拉取完成，开始打包...');
-        updateProgress(10); // Git pull完成后，进度设为10%
-        startActualBuild();
-      });
+      };
+      
+      pullPlatformCode();
     });
   } else {
-    // 没有Flutter项目，直接拉取项目根目录代码
-    pullLatestCode(projectPath, sessionId, (error, output) => {
-      if (error) {
-        addLog('error', `拉取代码时出错: ${error.message}`);
-        // 即使拉取失败，也继续打包
+    // 没有Flutter项目
+    // 拉取平台代码的函数
+    const pullPlatformCode = () => {
+      // 如果需要打包iOS，先拉取iOS代码
+      if (iosPath) {
+        addLog('info', `开始拉取iOS代码: ${iosPath}`);
+        pullLatestCode(iosPath, sessionId, (error, output) => {
+          if (error) {
+            addLog('error', `拉取iOS代码时出错: ${error.message}`);
+            // 即使拉取失败，也继续打包
+          } else {
+            addLog('success', 'iOS代码拉取完成');
+          }
+          
+          // iOS代码拉取完成后，如果需要打包Android，拉取Android代码
+          if (androidPath) {
+            addLog('info', `开始拉取Android代码: ${androidPath}`);
+            pullLatestCode(androidPath, sessionId, (error, output) => {
+              if (error) {
+                addLog('error', `拉取Android代码时出错: ${error.message}`);
+                // 即使拉取失败，也继续打包
+              } else {
+                addLog('success', 'Android代码拉取完成');
+              }
+              
+              addLog('info', '代码拉取完成，开始打包...');
+              updateProgress(10); // Git pull完成后，进度设为10%
+              startActualBuild();
+            });
+          } else {
+            // 不需要打包Android，直接开始打包
+            addLog('info', '代码拉取完成，开始打包...');
+            updateProgress(10); // Git pull完成后，进度设为10%
+            startActualBuild();
+          }
+        });
+      } else if (androidPath) {
+        // 不需要打包iOS，但需要打包Android，拉取Android代码
+        addLog('info', `开始拉取Android代码: ${androidPath}`);
+        pullLatestCode(androidPath, sessionId, (error, output) => {
+          if (error) {
+            addLog('error', `拉取Android代码时出错: ${error.message}`);
+            // 即使拉取失败，也继续打包
+          } else {
+            addLog('success', 'Android代码拉取完成');
+          }
+          
+          addLog('info', '代码拉取完成，开始打包...');
+          updateProgress(10); // Git pull完成后，进度设为10%
+          startActualBuild();
+        });
+      } else {
+        // 不需要打包iOS和Android，直接拉取项目根目录代码
+        addLog('info', `开始拉取项目代码: ${projectPath}`);
+        pullLatestCode(projectPath, sessionId, (error, output) => {
+          if (error) {
+            addLog('error', `拉取代码时出错: ${error.message}`);
+            // 即使拉取失败，也继续打包
+          }
+          
+          addLog('info', '代码拉取完成，开始打包...');
+          updateProgress(10); // Git pull完成后，进度设为10%
+          startActualBuild();
+        });
       }
-      
-      addLog('info', '代码拉取完成，开始打包...');
-      updateProgress(10); // Git pull完成后，进度设为10%
-      startActualBuild();
-    });
+    };
+    
+    pullPlatformCode();
   }
   
   // 将实际的打包逻辑提取到单独的函数中

@@ -239,6 +239,11 @@ input[type="text"]:hover {
     color: white;
 }
 
+.project-type-badge.flutter {
+    background: #02569b;
+    color: white;
+}
+
 .hidden {
     display: none;
 }
