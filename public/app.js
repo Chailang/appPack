@@ -4,7 +4,6 @@ const API_BASE = 'http://localhost:3000/api';
 const projectPathInput = document.getElementById('projectPath');
 const outputPathInput = document.getElementById('outputPath');
 const browseBtn = document.getElementById('browseBtn');
-const browseOutputBtn = document.getElementById('browseOutputBtn');
 const checkBtn = document.getElementById('checkBtn');
 const buildBtn = document.getElementById('buildBtn');
 const restartBtn = document.getElementById('restartBtn');
@@ -445,7 +444,7 @@ async function showPathSelector(type, currentValue) {
         document.body.appendChild(modal);
         
         // 选择子目录函数
-        window.selectDirectory = (fullPath) => {
+        window.selectDirectory = async (fullPath) => {
             // 自动选择
             if (type === 'project') {
                 // 如果项目路径改变，清空版本号和 Build 号
@@ -454,14 +453,15 @@ async function showPathSelector(type, currentValue) {
                 }
                 projectPathInput.value = fullPath;
                 lastProjectPath = fullPath;
-            } else {
-                outputPathInput.value = fullPath;
+                
+                // 自动生成输出包文件夹路径
+                await updateOutputPath(fullPath);
             }
             document.body.removeChild(modal);
         };
         
         // 选择路径函数
-        window.selectPath = (path) => {
+        window.selectPath = async (path) => {
             // 自动选择
             if (type === 'project') {
                 // 如果项目路径改变，清空版本号和 Build 号
@@ -470,8 +470,9 @@ async function showPathSelector(type, currentValue) {
                 }
                 projectPathInput.value = path;
                 lastProjectPath = path;
-            } else {
-                outputPathInput.value = path;
+                
+                // 自动生成输出包文件夹路径
+                await updateOutputPath(path);
             }
             document.body.removeChild(modal);
         };
@@ -505,11 +506,40 @@ async function showPathSelector(type, currentValue) {
 // 浏览文件夹
 browseBtn.addEventListener('click', () => {
     showPathSelector('project', projectPathInput.value);
+    // 如果项目路径已存在，自动更新输出路径
+    if (projectPathInput.value) {
+        updateOutputPath(projectPathInput.value);
+    }
 });
 
-browseOutputBtn.addEventListener('click', () => {
-    showPathSelector('output', outputPathInput.value);
-});
+// 自动更新输出包文件夹路径
+async function updateOutputPath(projectPath) {
+    try {
+        // 获取配置
+        const response = await fetch(`${API_BASE}/config`);
+        const data = await response.json();
+        
+        if (data.success && data.config) {
+            // 从 outputPaths 数组中获取输出包基础路径（取第一个）
+            const outputPaths = data.config.outputPaths || [];
+            const outputBasePath = outputPaths.length > 0 
+                ? outputPaths[0] 
+                : '/Users/chaiweidong/Desktop/jucom-work/tool/打包工具/output';
+            
+            // 获取项目路径的最后一级目录名
+            const pathParts = projectPath.split('/').filter(part => part.trim() !== '');
+            const projectDirName = pathParts[pathParts.length - 1];
+            
+            // 拼接输出路径
+            const outputPath = `${outputBasePath}/${projectDirName}`;
+            
+            // 回填到输出包文件夹输入框
+            outputPathInput.value = outputPath;
+        }
+    } catch (error) {
+        console.error('更新输出路径失败:', error);
+    }
+}
 
 // 支持拖拽文件夹
 projectPathInput.addEventListener('dragover', (e) => {

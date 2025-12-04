@@ -37,6 +37,20 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="outputPath">输出包文件夹：</label>
+                    <div class="path-input-group">
+                        <input 
+                            type="text" 
+                            id="outputPath" 
+                            placeholder="输出包文件夹路径将自动生成"
+                            value=""
+                            readonly
+                        >
+                    </div>
+                    <small class="hint">打包文件将按日期自动创建子文件夹</small>
+                </div>
+
+                <div class="form-group">
                     <button type="button" id="checkBtn" class="btn-primary">检查项目</button>
                 </div>
 
@@ -49,21 +63,6 @@
             <div class="card">
                 <h2>打包选项</h2>
                 
-                <div class="form-group">
-                    <label for="outputPath">输出包文件夹：</label>
-                    <div class="path-input-group">
-                        <input 
-                            type="text" 
-                            id="outputPath" 
-                            placeholder="请输入输出包文件夹路径，例如: /Users/username/outputs"
-                            value=""
-                            readonly
-                        >
-                        <button type="button" id="browseOutputBtn" class="btn-secondary">选择</button>
-                    </div>
-                    <small class="hint">打包文件将按日期自动创建子文件夹</small>
-                </div>
-
                 <div class="form-group">
                     <label>打包类型：</label>
                     <div class="radio-group">
