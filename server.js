@@ -610,6 +610,7 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
 
   // 构建Archive命令
   // 需要指定destination为generic/platform=iOS，否则可能选择macOS导致失败
+  // 添加 -allowProvisioningUpdates 让 Xcode 自动下载和更新描述文件
   let archiveArgs;
   if (workspaceFile) {
     archiveArgs = [
@@ -617,6 +618,7 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
       '-scheme', schemeName,
       '-configuration', 'Release',
       '-destination', 'generic/platform=iOS',
+      '-allowProvisioningUpdates',
       'archive',
       '-archivePath', archivePath
     ];
@@ -626,6 +628,7 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
       '-scheme', schemeName,
       '-configuration', 'Release',
       '-destination', 'generic/platform=iOS',
+      '-allowProvisioningUpdates',
       'archive',
       '-archivePath', archivePath
     ];
@@ -691,12 +694,18 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>destination</key>
+    <string>export</string>
     <key>method</key>
     <string>release-testing</string>
-    <key>compileBitcode</key>
-    <false/>
+    <key>signingStyle</key>
+    <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
+    <key>teamID</key>
+    <string>E73VKWY7KP</string>
+    <key>thinning</key>
+    <string>&lt;none&gt;</string>
 </dict>
 </plist>`;
     
@@ -706,7 +715,8 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
       '-exportArchive',
       '-archivePath', archivePath,
       '-exportPath', exportDir,
-      '-exportOptionsPlist', exportOptionsPath
+      '-exportOptionsPlist', exportOptionsPath,
+      '-allowProvisioningUpdates'
     ];
 
     addLog('info', '开始导出IPA文件...');
@@ -886,9 +896,9 @@ function buildIOS(projectPath, outputPath, callback) {
 
   let buildCommand;
   if (workspaceFile) {
-    buildCommand = `xcodebuild -workspace "${workspaceFile}" -scheme "${schemeName}" -configuration Release archive -archivePath "${archivePath}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO`;
+    buildCommand = `xcodebuild -workspace "${workspaceFile}" -scheme "${schemeName}" -configuration Release -destination "generic/platform=iOS" -allowProvisioningUpdates archive -archivePath "${archivePath}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO`;
   } else {
-    buildCommand = `xcodebuild -project "${projectFile}" -scheme "${schemeName}" -configuration Release archive -archivePath "${archivePath}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO`;
+    buildCommand = `xcodebuild -project "${projectFile}" -scheme "${schemeName}" -configuration Release -destination "generic/platform=iOS" -allowProvisioningUpdates archive -archivePath "${archivePath}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO`;
   }
 
   console.log('========================================');
@@ -939,19 +949,25 @@ function buildIOS(projectPath, outputPath, callback) {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>destination</key>
+    <string>export</string>
     <key>method</key>
     <string>release-testing</string>
-    <key>compileBitcode</key>
-    <false/>
+    <key>signingStyle</key>
+    <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
+    <key>teamID</key>
+    <string>E73VKWY7KP</string>
+    <key>thinning</key>
+    <string>&lt;none&gt;</string>
 </dict>
 </plist>`;
     
     fs.writeFileSync(exportOptionsPath, exportOptionsContent);
     
-    // 执行导出IPA命令
-    const exportCommand = `xcodebuild -exportArchive -archivePath "${archivePath}" -exportPath "${exportDir}" -exportOptionsPlist "${exportOptionsPath}"`;
+    // 执行导出IPA命令（添加 -allowProvisioningUpdates 自动拉取描述文件）
+    const exportCommand = `xcodebuild -exportArchive -archivePath "${archivePath}" -exportPath "${exportDir}" -exportOptionsPlist "${exportOptionsPath}" -allowProvisioningUpdates`;
     
     console.log('执行导出IPA命令:', exportCommand);
     
@@ -1988,16 +2004,49 @@ function startBuild(sessionId) {
       updateProgress(100);
       addLog(hasError ? 'error' : 'success', hasError ? '打包过程中出现错误' : `打包完成，文件已保存到: ${outputDateDir}`);
       
-      // 如果打包成功，发送 Lark 消息
-      if (!hasError) {
-        const config = readConfig();
-        if (config.larkWebhookUrl && config.larkWebhookUrl.trim()) {
-          // 获取项目目录的最后一级子目录名称（例如：2-coinvex）
-          const projectDirName = path.basename(projectPath);
+      // 发送 Lark 消息（成功或失败都发送）
+      const config = readConfig();
+      if (config.larkWebhookUrl && config.larkWebhookUrl.trim()) {
+        // 获取项目目录的最后一级子目录名称（例如：2-coinvex）
+        const projectDirName = path.basename(projectPath);
+        
+        // 构建消息内容
+        let message = hasError 
+          ? `❌ ${projectDirName} 项目打包失败\n\n`
+          : `✅ ${projectDirName} 项目打包成功\n\n`;
+        
+        if (hasError) {
+          // 打包失败的情况
+          message += `⚠️ 打包过程中出现错误\n\n`;
           
-          // 构建消息内容
-          let message = `${projectDirName} 项目打包成功\n\n`;
+          // 添加失败详情
+          if (session.results.android && !session.results.android.success) {
+            message += `❌ Android 打包失败\n`;
+            const androidOutput = session.results.android.output || '';
+            // 提取错误信息（取前500字符）
+            const errorMsg = androidOutput.substring(0, 500);
+            if (errorMsg) {
+              message += `   错误信息: ${errorMsg.replace(/\n/g, ' ')}\n`;
+            }
+          }
           
+          if (session.results.ios && !session.results.ios.success) {
+            message += `❌ iOS 打包失败\n`;
+            const iosOutput = session.results.ios.output || '';
+            // 提取错误信息（取前500字符）
+            const errorMsg = iosOutput.substring(0, 500);
+            if (errorMsg) {
+              message += `   错误信息: ${errorMsg.replace(/\n/g, ' ')}\n`;
+            }
+          }
+          
+          // 如果两个都失败了，或者没有结果
+          if ((!session.results.android || !session.results.android.success) && 
+              (!session.results.ios || !session.results.ios.success)) {
+            message += `\n请检查打包日志以获取详细错误信息。\n`;
+          }
+        } else {
+          // 打包成功的情况
           // 添加打包成功信息
           if (session.results.android && session.results.android.success) {
             message += `✅ Android 打包成功\n`;
@@ -2034,57 +2083,57 @@ function startBuild(sessionId) {
               message += `   IPA: ${ipaMatch[1]} 个文件\n`;
             }
           }
-          
-          message += `\n📁 输出路径: ${outputDateDir}\n`;
-          message += `📅 打包时间: ${new Date().toLocaleString('zh-CN')}\n`;
-          
+        }
+        
+        message += `\n📁 输出路径: ${outputDateDir}\n`;
+        message += `📅 打包时间: ${new Date().toLocaleString('zh-CN')}\n`;
+        
+        // 查找 APK 文件（仅在成功时）
+        let apkFilePath = null;
+        if (!hasError && session.results.android && session.results.android.success) {
           // 查找 APK 文件
-          let apkFilePath = null;
-          if (session.results.android && session.results.android.success) {
-            // 查找 APK 文件
-            const androidOutputDir = path.join(outputDateDir, 'android');
-            const apkDirs = [
-              path.join(androidOutputDir, 'apk', 'JcApk', 'release'),
-              path.join(androidOutputDir, 'apk', 'release')
-            ];
-            
-            for (const apkDir of apkDirs) {
-              if (fs.existsSync(apkDir)) {
-                try {
-                  const files = fs.readdirSync(apkDir).filter(f => f.endsWith('.apk'));
-                  if (files.length > 0) {
-                    // 获取最新的 APK 文件（按修改时间排序）
-                    const apkFiles = files.map(f => ({
-                      name: f,
-                      path: path.join(apkDir, f),
-                      mtime: fs.statSync(path.join(apkDir, f)).mtime
-                    })).sort((a, b) => b.mtime - a.mtime);
-                    
-                    if (apkFiles.length > 0) {
-                      apkFilePath = apkFiles[0].path;
-                      break;
-                    }
+          const androidOutputDir = path.join(outputDateDir, 'android');
+          const apkDirs = [
+            path.join(androidOutputDir, 'apk', 'JcApk', 'release'),
+            path.join(androidOutputDir, 'apk', 'release')
+          ];
+          
+          for (const apkDir of apkDirs) {
+            if (fs.existsSync(apkDir)) {
+              try {
+                const files = fs.readdirSync(apkDir).filter(f => f.endsWith('.apk'));
+                if (files.length > 0) {
+                  // 获取最新的 APK 文件（按修改时间排序）
+                  const apkFiles = files.map(f => ({
+                    name: f,
+                    path: path.join(apkDir, f),
+                    mtime: fs.statSync(path.join(apkDir, f)).mtime
+                  })).sort((a, b) => b.mtime - a.mtime);
+                  
+                  if (apkFiles.length > 0) {
+                    apkFilePath = apkFiles[0].path;
+                    break;
                   }
-                } catch (error) {
-                  addLog('warning', `查找 APK 文件时出错: ${error.message}`);
                 }
+              } catch (error) {
+                addLog('warning', `查找 APK 文件时出错: ${error.message}`);
               }
             }
           }
-          
-          // 异步发送消息，不阻塞主流程
-          sendLarkMessage(config.larkWebhookUrl, message, apkFilePath).then(result => {
-            if (result.success) {
-              addLog('info', 'Lark 消息发送成功');
-            } else {
-              addLog('warning', `Lark 消息发送失败: ${result.message}`);
-            }
-          }).catch(error => {
-            addLog('warning', `Lark 消息发送异常: ${error.message}`);
-          });
-        } else {
-          addLog('info', 'Lark Webhook URL 未配置，跳过消息发送');
         }
+        
+        // 异步发送消息，不阻塞主流程
+        sendLarkMessage(config.larkWebhookUrl, message, apkFilePath).then(result => {
+          if (result.success) {
+            addLog('info', 'Lark 消息发送成功');
+          } else {
+            addLog('warning', `Lark 消息发送失败: ${result.message}`);
+          }
+        }).catch(error => {
+          addLog('warning', `Lark 消息发送异常: ${error.message}`);
+        });
+      } else {
+        addLog('info', 'Lark Webhook URL 未配置，跳过消息发送');
       }
       
       // 5分钟后清理会话
