@@ -3,6 +3,9 @@ const cors = require('cors');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
+const os = require('os');
 
 const app = express();
 const PORT = 3000;
@@ -1070,7 +1073,8 @@ function readConfig() {
     outputBasePath: '',
     projectPaths: [],
     outputPaths: [],
-    gitPassphrase: '712712'
+    gitPassphrase: '712712',
+    larkWebhookUrl: ''
   };
 }
 
@@ -1085,6 +1089,190 @@ function saveConfig(config) {
   }
 }
 
+// 发送 Lark 消息
+function sendLarkMessage(webhookUrl, message, filePath = null) {
+  return new Promise((resolve, reject) => {
+    if (!webhookUrl || !webhookUrl.trim()) {
+      resolve({ success: false, message: 'Lark Webhook URL 未配置' });
+      return;
+    }
+
+    try {
+      const url = new URL(webhookUrl);
+      const isHttps = url.protocol === 'https:';
+      const client = isHttps ? https : http;
+      
+      // 如果有文件路径，构建包含文件信息的消息
+      let messageContent = message;
+      if (filePath && fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        const fileSize = (stats.size / 1024 / 1024).toFixed(2); // MB
+        const fileName = path.basename(filePath);
+        messageContent += `\n\n📦 打包文件信息：\n`;
+        messageContent += `文件名: ${fileName}\n`;
+        messageContent += `文件大小: ${fileSize} MB\n`;
+        messageContent += `文件路径: ${filePath}\n`;
+        messageContent += `\n💡 提示: 文件已保存在服务器本地，请通过其他方式获取文件。`;
+      }
+      
+      const postData = JSON.stringify({
+        msg_type: 'text',
+        content: {
+          text: messageContent
+        }
+      });
+
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      const req = client.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            resolve({ success: true, message: 'Lark 消息发送成功', data });
+          } else {
+            resolve({ success: false, message: `Lark 消息发送失败，状态码: ${res.statusCode}`, data });
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        resolve({ success: false, message: `Lark 消息发送失败: ${error.message}` });
+      });
+
+      req.write(postData);
+      req.end();
+    } catch (error) {
+      resolve({ success: false, message: `Lark 消息发送失败: ${error.message}` });
+    }
+  });
+}
+
+// 获取本机 IP 地址
+function getLocalIPs() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // 跳过内部（即 127.0.0.1）和非 IPv4 地址
+      if (iface.family === 'IPv4' && !iface.internal) {
+        ips.push({
+          interface: name,
+          address: iface.address
+        });
+      }
+    }
+  }
+  
+  return ips;
+}
+
+// 获取公网 IP 地址
+function getPublicIP() {
+  return new Promise((resolve, reject) => {
+    // 使用多个服务获取公网 IP，提高成功率
+    const services = [
+      'https://api.ipify.org?format=json',
+      'https://api.ip.sb/ip',
+      'https://ifconfig.me/ip'
+    ];
+    
+    let currentIndex = 0;
+    
+    const tryNext = () => {
+      if (currentIndex >= services.length) {
+        reject(new Error('无法获取公网 IP'));
+        return;
+      }
+      
+      const url = services[currentIndex];
+      const isHttps = url.startsWith('https');
+      const client = isHttps ? https : http;
+      
+      const req = client.get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            // 尝试解析 JSON
+            const json = JSON.parse(data);
+            resolve(json.ip || data.trim());
+          } catch {
+            // 如果不是 JSON，直接返回文本
+            resolve(data.trim());
+          }
+        });
+      });
+      
+      req.on('error', () => {
+        currentIndex++;
+        tryNext();
+      });
+      
+      req.setTimeout(5000, () => {
+        req.destroy();
+        currentIndex++;
+        tryNext();
+      });
+    };
+    
+    tryNext();
+  });
+}
+
+// API路由：测试发送 Lark 消息
+app.post('/api/lark/test', async (req, res) => {
+  try {
+    const { webhookUrl, message, filePath } = req.body;
+    const testWebhookUrl = webhookUrl || 'https://open.larksuite.com/open-apis/bot/v2/hook/69a4732c-f817-4cdd-85aa-3cf2dd7cc562';
+    const testMessage = message || '正在测试，主要来测试功能好不好使，好使的话';
+    
+    const result = await sendLarkMessage(testWebhookUrl, testMessage, filePath);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// API路由：获取当前 IP 信息
+app.get('/api/ip-info', async (req, res) => {
+  try {
+    const localIPs = getLocalIPs();
+    let publicIP = null;
+    
+    try {
+      publicIP = await getPublicIP();
+    } catch (error) {
+      console.error('获取公网 IP 失败:', error.message);
+    }
+    
+    res.json({
+      success: true,
+      localIPs: localIPs,
+      publicIP: publicIP,
+      message: publicIP 
+        ? `当前公网 IP: ${publicIP}` 
+        : '无法获取公网 IP，请检查网络连接'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API路由：获取配置
 app.get('/api/config', (req, res) => {
   try {
@@ -1098,15 +1286,16 @@ app.get('/api/config', (req, res) => {
 // API路由：更新配置
 app.post('/api/config', (req, res) => {
   try {
-    const { projectBasePath, outputBasePath, projectPaths, outputPaths, gitPassphrase } = req.body;
-    // 读取现有配置，保留 gitPassphrase
+    const { projectBasePath, outputBasePath, projectPaths, outputPaths, gitPassphrase, larkWebhookUrl } = req.body;
+    // 读取现有配置，保留已有配置
     const existingConfig = readConfig();
     const config = {
-      projectBasePath: projectBasePath || '',
-      outputBasePath: outputBasePath || '',
-      projectPaths: projectPaths || [],
-      outputPaths: outputPaths || [],
-      gitPassphrase: gitPassphrase !== undefined ? gitPassphrase : (existingConfig.gitPassphrase || '712712')
+      projectBasePath: projectBasePath !== undefined ? projectBasePath : existingConfig.projectBasePath,
+      outputBasePath: outputBasePath !== undefined ? outputBasePath : existingConfig.outputBasePath,
+      projectPaths: projectPaths !== undefined ? projectPaths : existingConfig.projectPaths,
+      outputPaths: outputPaths !== undefined ? outputPaths : existingConfig.outputPaths,
+      gitPassphrase: gitPassphrase !== undefined ? gitPassphrase : (existingConfig.gitPassphrase || '712712'),
+      larkWebhookUrl: larkWebhookUrl !== undefined ? larkWebhookUrl : (existingConfig.larkWebhookUrl || '')
     };
     if (saveConfig(config)) {
       res.json({ success: true, message: '配置已保存' });
@@ -1221,9 +1410,249 @@ app.post('/api/check-project', (req, res) => {
 // 存储构建会话
 const buildSessions = new Map();
 
+// 修改 Android 项目的版本号
+function updateAndroidVersion(androidPath, versionName, versionCode) {
+  try {
+    // 只查找 config.gradle 文件
+    const configGradlePath = path.join(androidPath, 'config.gradle');
+    
+    if (!fs.existsSync(configGradlePath)) {
+      return {
+        success: false,
+        message: '未找到 Android config.gradle 文件'
+      };
+    }
+    
+    let content = fs.readFileSync(configGradlePath, 'utf8');
+    const originalContent = content;
+    let modified = false;
+    
+    // 修改 ext.android.versionName
+    // 格式: versionName : '1.1.0', 或 versionName: '1.1.0',
+    if (versionName) {
+      // 匹配 versionName : 'xxx', 或 versionName: 'xxx', 或 versionName : "xxx", 或 versionName: "xxx",
+      const versionNamePattern = /(versionName\s*:\s*)(['"])([^'"]+)(['"]\s*,)/g;
+      if (versionNamePattern.test(content)) {
+        versionNamePattern.lastIndex = 0;
+        content = content.replace(versionNamePattern, (match, p1, p2, p3, p4) => {
+          // 保持原有的引号类型（单引号或双引号）
+          return `${p1}${p2}${versionName}${p4}`;
+        });
+        modified = true;
+      } else {
+        return {
+          success: false,
+          message: '未找到 versionName 配置（格式应为: versionName : \'xxx\', 或 versionName: "xxx",）'
+        };
+      }
+    }
+    
+    // 修改 ext.android.versionCode
+    // 格式: versionCode : 10002, 或 versionCode: 10002,
+    if (versionCode) {
+      // 匹配 versionCode : 123, 或 versionCode: 123,
+      const versionCodePattern = /(versionCode\s*:\s*)(\d+)(\s*,)/g;
+      if (versionCodePattern.test(content)) {
+        versionCodePattern.lastIndex = 0;
+        content = content.replace(versionCodePattern, `$1${versionCode}$3`);
+        modified = true;
+      } else {
+        return {
+          success: false,
+          message: '未找到 versionCode 配置（格式应为: versionCode : 123, 或 versionCode: 123,）'
+        };
+      }
+    }
+    
+    if (modified && content !== originalContent) {
+      fs.writeFileSync(configGradlePath, content, 'utf8');
+      return {
+        success: true,
+        message: `已修改 Android 版本信息: config.gradle`,
+        file: configGradlePath
+      };
+    } else {
+      return {
+        success: false,
+        message: '未找到版本配置项或无需修改'
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: `修改 Android 版本号失败: ${error.message}`
+    };
+  }
+}
+
+// 修改 iOS 项目的版本号
+function updateIOSVersion(iosPath, versionName, versionCode) {
+  try {
+    // 查找 Info.plist 文件
+    const infoPlistPaths = [
+      path.join(iosPath, 'Info.plist'),
+      path.join(iosPath, 'Runner', 'Info.plist'),
+      path.join(iosPath, path.basename(iosPath), 'Info.plist')
+    ];
+    
+    let infoPlistPath = null;
+    for (const plistPath of infoPlistPaths) {
+      if (fs.existsSync(plistPath)) {
+        infoPlistPath = plistPath;
+        break;
+      }
+    }
+    
+    if (!infoPlistPath) {
+      // 尝试搜索所有 Info.plist 文件
+      const searchInfoPlist = (dir) => {
+        if (!fs.existsSync(dir)) return null;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isFile() && entry.name === 'Info.plist') {
+            return fullPath;
+          } else if (entry.isDirectory() && entry.name !== 'build' && entry.name !== '.git') {
+            const found = searchInfoPlist(fullPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      infoPlistPath = searchInfoPlist(iosPath);
+    }
+    
+    if (!infoPlistPath) {
+      return {
+        success: false,
+        message: '未找到 iOS Info.plist 文件'
+      };
+    }
+    
+    // 读取并解析 Info.plist
+    let content = fs.readFileSync(infoPlistPath, 'utf8');
+    const originalContent = content;
+    let modified = false;
+    
+    // 修改 CFBundleShortVersionString (版本号)
+    if (versionName) {
+      const versionNamePattern = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/;
+      if (versionNamePattern.test(content)) {
+        content = content.replace(versionNamePattern, `<key>CFBundleShortVersionString</key>\n\t<string>${versionName}</string>`);
+        modified = true;
+      } else {
+        // 如果没有找到，尝试添加
+        const dictPattern = /(<dict>)/;
+        if (dictPattern.test(content)) {
+          content = content.replace(dictPattern, `$1\n\t<key>CFBundleShortVersionString</key>\n\t<string>${versionName}</string>`);
+          modified = true;
+        }
+      }
+    }
+    
+    // 修改 CFBundleVersion (Build 号)
+    if (versionCode) {
+      const versionCodePattern = /<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/;
+      if (versionCodePattern.test(content)) {
+        content = content.replace(versionCodePattern, `<key>CFBundleVersion</key>\n\t<string>${versionCode}</string>`);
+        modified = true;
+      } else {
+        // 如果没有找到，尝试添加
+        const dictPattern = /(<dict>)/;
+        if (dictPattern.test(content)) {
+          content = content.replace(dictPattern, `$1\n\t<key>CFBundleVersion</key>\n\t<string>${versionCode}</string>`);
+          modified = true;
+        }
+      }
+    }
+    
+    if (content !== originalContent) {
+      fs.writeFileSync(infoPlistPath, content, 'utf8');
+      return {
+        success: true,
+        message: `已修改 iOS 版本信息: ${path.relative(iosPath, infoPlistPath)}`,
+        file: infoPlistPath
+      };
+    } else {
+      return {
+        success: false,
+        message: '未找到 iOS 版本配置项'
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: `修改 iOS 版本号失败: ${error.message}`
+    };
+  }
+}
+
+// 修改 Flutter 代码中的 JcEnv 配置
+function updateFlutterJcEnv(flutterPath, envType) {
+  try {
+    // 常见的 Flutter 代码文件位置
+    const possiblePaths = [
+      path.join(flutterPath, 'lib', 'main.dart'),
+      path.join(flutterPath, 'lib', 'config', 'env.dart'),
+      path.join(flutterPath, 'lib', 'utils', 'env.dart'),
+      path.join(flutterPath, 'lib', 'common', 'env.dart')
+    ];
+    
+    // 搜索所有 Dart 文件
+    const searchInDirectory = (dir, fileList = []) => {
+      if (!fs.existsSync(dir)) return fileList;
+      
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory() && entry.name !== 'build' && entry.name !== '.dart_tool') {
+          searchInDirectory(fullPath, fileList);
+        } else if (entry.isFile() && entry.name.endsWith('.dart')) {
+          fileList.push(fullPath);
+        }
+      }
+      return fileList;
+    };
+    
+    // 在所有 Dart 文件中搜索 JcEnv jcEnv = JcEnv
+    const dartFiles = searchInDirectory(path.join(flutterPath, 'lib'));
+    
+    for (const filePath of dartFiles) {
+      try {
+        let content = fs.readFileSync(filePath, 'utf8');
+        const originalContent = content;
+        
+        // 匹配 JcEnv jcEnv = JcEnv.test; 或 JcEnv jcEnv = JcEnv.prd;
+        const pattern = /JcEnv\s+jcEnv\s*=\s*JcEnv\.(test|prd)\s*;/g;
+        
+        if (pattern.test(content)) {
+          const targetEnv = envType === 'prd' ? 'prd' : 'test';
+          content = content.replace(pattern, `JcEnv jcEnv = JcEnv.${targetEnv};`);
+          
+          if (content !== originalContent) {
+            fs.writeFileSync(filePath, content, 'utf8');
+            return { 
+              success: true, 
+              filePath: filePath,
+              message: `已修改 ${path.relative(flutterPath, filePath)} 中的 JcEnv 为 ${targetEnv}`
+            };
+          }
+        }
+      } catch (error) {
+        // 跳过无法读取的文件
+        continue;
+      }
+    }
+    
+    return { success: false, message: '未找到 JcEnv jcEnv = JcEnv 配置' };
+  } catch (error) {
+    return { success: false, message: `修改 Flutter JcEnv 配置失败: ${error.message}` };
+  }
+}
+
 // API路由：开始打包（返回会话ID）
 app.post('/api/build/start', (req, res) => {
-  const { projectPath, outputPath, buildType } = req.body;
+  const { projectPath, outputPath, buildType, envType, versionName, versionCode } = req.body;
   
   if (!projectPath) {
     return res.status(400).json({ error: '项目路径不能为空' });
@@ -1257,6 +1686,9 @@ app.post('/api/build/start', (req, res) => {
     projectPath,
     outputPath,
     buildType,
+    envType: envType || 'test', // 环境类型，默认为 test
+    versionName: versionName || '', // 版本号
+    versionCode: versionCode || '', // Build 号
     status: 'building', // 初始状态为building，表示正在构建中
     logs: [],
     progress: 0, // 明确初始化进度为0
@@ -1307,7 +1739,15 @@ app.get('/api/build/progress/:sessionId', (req, res) => {
     const currentSession = buildSessions.get(sessionId);
     if (!currentSession) {
       clearInterval(interval);
-      res.end();
+      // 发送最后一条消息，告知会话已结束
+      res.write(`data: ${JSON.stringify({ 
+        status: 'completed',
+        logs: [],
+        results: {},
+        progress: 100,
+        message: '会话已结束'
+      })}\n\n`);
+      setTimeout(() => res.end(), 500);
       return;
     }
 
@@ -1322,14 +1762,30 @@ app.get('/api/build/progress/:sessionId', (req, res) => {
       progress: currentSession.progress || 0
     })}\n\n`);
 
-    // 如果完成，关闭连接
+    // 如果完成，发送最后一条消息后关闭连接
     if (currentSession.status === 'completed' || currentSession.status === 'failed') {
       clearInterval(interval);
-      setTimeout(() => res.end(), 1000);
+      // 发送最后一条完成消息
+      res.write(`data: ${JSON.stringify({ 
+        status: currentSession.status, 
+        logs: [],
+        results: currentSession.results,
+        progress: 100,
+        completed: true
+      })}\n\n`);
+      // 延迟关闭，确保前端能收到最后一条消息
+      setTimeout(() => {
+        res.end();
+      }, 1000);
     }
   }, 200); // 每200ms更新一次，更流畅
 
   req.on('close', () => {
+    clearInterval(interval);
+  });
+  
+  // 处理客户端断开连接
+  req.on('aborted', () => {
     clearInterval(interval);
   });
 });
@@ -1498,10 +1954,138 @@ function startBuild(sessionId) {
     updateProgress(progressPercent);
     
     if (completed === total) {
-      const hasError = session.results.errors.length > 0;
+      // 检查是否有实际的打包错误（只检查 Android 和 iOS 打包是否成功）
+      const hasAndroidError = session.results.android && !session.results.android.success;
+      const hasIOSError = session.results.ios && !session.results.ios.success;
+      
+      // 只检查实际的打包错误，忽略其他非关键错误
+      const hasError = hasAndroidError || hasIOSError;
+      
+      // 如果有错误，输出详细的错误信息
+      if (hasError) {
+        addLog('error', `打包失败详情:`);
+        if (hasAndroidError && session.results.android) {
+          addLog('error', `Android: ${session.results.android.output || '未知错误'}`);
+        }
+        if (hasIOSError && session.results.ios) {
+          addLog('error', `iOS: ${session.results.ios.output || '未知错误'}`);
+        }
+        // 输出 errors 数组中的错误（如果有）
+        if (session.results.errors.length > 0) {
+          session.results.errors.forEach(err => {
+            addLog('error', `${err.type}: ${err.error}`);
+          });
+        }
+      } else if (session.results.errors.length > 0) {
+        // 如果有非关键错误，只记录为警告
+        addLog('warning', `打包过程中有一些警告:`);
+        session.results.errors.forEach(err => {
+          addLog('warning', `${err.type}: ${err.error}`);
+        });
+      }
+      
       session.status = hasError ? 'failed' : 'completed';
       updateProgress(100);
       addLog(hasError ? 'error' : 'success', hasError ? '打包过程中出现错误' : `打包完成，文件已保存到: ${outputDateDir}`);
+      
+      // 如果打包成功，发送 Lark 消息
+      if (!hasError) {
+        const config = readConfig();
+        if (config.larkWebhookUrl && config.larkWebhookUrl.trim()) {
+          // 获取项目目录的最后一级子目录名称（例如：2-coinvex）
+          const projectDirName = path.basename(projectPath);
+          
+          // 构建消息内容
+          let message = `${projectDirName} 项目打包成功\n\n`;
+          
+          // 添加打包成功信息
+          if (session.results.android && session.results.android.success) {
+            message += `✅ Android 打包成功\n`;
+            // 从输出信息中提取关键信息
+            const androidOutput = session.results.android.output || '';
+            // 提取文件数量等信息
+            const fileMatch = androidOutput.match(/(\d+)\s*个文件/);
+            if (fileMatch) {
+              message += `   已生成 ${fileMatch[1]} 个文件\n`;
+            }
+            // 提取 APK/AAB 信息
+            const apkMatch = androidOutput.match(/APK[^:]*:\s*(\d+)\s*个文件/);
+            const aabMatch = androidOutput.match(/AAB[^:]*:\s*(\d+)\s*个文件/);
+            if (apkMatch) {
+              message += `   APK: ${apkMatch[1]} 个文件\n`;
+            }
+            if (aabMatch) {
+              message += `   AAB: ${aabMatch[1]} 个文件\n`;
+            }
+          }
+          
+          if (session.results.ios && session.results.ios.success) {
+            message += `✅ iOS 打包成功\n`;
+            // 从输出信息中提取关键信息
+            const iosOutput = session.results.ios.output || '';
+            // 提取文件数量等信息
+            const fileMatch = iosOutput.match(/(\d+)\s*个文件/);
+            if (fileMatch) {
+              message += `   已生成 ${fileMatch[1]} 个文件\n`;
+            }
+            // 提取 IPA 信息
+            const ipaMatch = iosOutput.match(/IPA[^:]*:\s*(\d+)\s*个文件/);
+            if (ipaMatch) {
+              message += `   IPA: ${ipaMatch[1]} 个文件\n`;
+            }
+          }
+          
+          message += `\n📁 输出路径: ${outputDateDir}\n`;
+          message += `📅 打包时间: ${new Date().toLocaleString('zh-CN')}\n`;
+          
+          // 查找 APK 文件
+          let apkFilePath = null;
+          if (session.results.android && session.results.android.success) {
+            // 查找 APK 文件
+            const androidOutputDir = path.join(outputDateDir, 'android');
+            const apkDirs = [
+              path.join(androidOutputDir, 'apk', 'JcApk', 'release'),
+              path.join(androidOutputDir, 'apk', 'release')
+            ];
+            
+            for (const apkDir of apkDirs) {
+              if (fs.existsSync(apkDir)) {
+                try {
+                  const files = fs.readdirSync(apkDir).filter(f => f.endsWith('.apk'));
+                  if (files.length > 0) {
+                    // 获取最新的 APK 文件（按修改时间排序）
+                    const apkFiles = files.map(f => ({
+                      name: f,
+                      path: path.join(apkDir, f),
+                      mtime: fs.statSync(path.join(apkDir, f)).mtime
+                    })).sort((a, b) => b.mtime - a.mtime);
+                    
+                    if (apkFiles.length > 0) {
+                      apkFilePath = apkFiles[0].path;
+                      break;
+                    }
+                  }
+                } catch (error) {
+                  addLog('warning', `查找 APK 文件时出错: ${error.message}`);
+                }
+              }
+            }
+          }
+          
+          // 异步发送消息，不阻塞主流程
+          sendLarkMessage(config.larkWebhookUrl, message, apkFilePath).then(result => {
+            if (result.success) {
+              addLog('info', 'Lark 消息发送成功');
+            } else {
+              addLog('warning', `Lark 消息发送失败: ${result.message}`);
+            }
+          }).catch(error => {
+            addLog('warning', `Lark 消息发送异常: ${error.message}`);
+          });
+        } else {
+          addLog('info', 'Lark Webhook URL 未配置，跳过消息发送');
+        }
+      }
       
       // 5分钟后清理会话
       setTimeout(() => {
@@ -1544,6 +2128,17 @@ function startBuild(sessionId) {
         // 即使拉取失败，也继续打包
       } else {
         addLog('success', 'Flutter代码拉取完成');
+      }
+      
+      // Flutter 代码拉取完成后，修改 JcEnv 配置
+      if (session.envType) {
+        addLog('info', `开始修改 Flutter JcEnv 配置为: ${session.envType === 'prd' ? '生产发布' : '测试'}`);
+        const updateResult = updateFlutterJcEnv(flutterPath, session.envType);
+        if (updateResult.success) {
+          addLog('success', updateResult.message);
+        } else {
+          addLog('warning', updateResult.message);
+        }
       }
       
       // 拉取平台代码的函数
@@ -1687,6 +2282,30 @@ function startBuild(sessionId) {
   
   // 将实际的打包逻辑提取到单独的函数中
   function startActualBuild() {
+    // 修改版本号（如果需要）
+    if (session.versionName || session.versionCode) {
+      // 修改 Android 版本号
+      if ((buildType === 'android' || buildType === 'both') && androidPath) {
+        addLog('info', '开始修改 Android 版本号...');
+        const androidResult = updateAndroidVersion(androidPath, session.versionName, session.versionCode);
+        if (androidResult.success) {
+          addLog('success', androidResult.message);
+        } else {
+          addLog('warning', androidResult.message);
+        }
+      }
+      
+      // 修改 iOS 版本号
+      if ((buildType === 'ios' || buildType === 'both') && iosPath) {
+        addLog('info', '开始修改 iOS 版本号...');
+        const iosResult = updateIOSVersion(iosPath, session.versionName, session.versionCode);
+        if (iosResult.success) {
+          addLog('success', iosResult.message);
+        } else {
+          addLog('warning', iosResult.message);
+        }
+      }
+    }
 
     // Android打包
     if (buildType === 'android' || buildType === 'both') {

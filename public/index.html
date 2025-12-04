@@ -83,6 +83,45 @@
                 </div>
 
                 <div class="form-group">
+                    <label>环境类型：</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="envType" value="test" checked>
+                            <span>测试</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="envType" value="prd">
+                            <span>生产发布</span>
+                        </label>
+                    </div>
+                    <small class="hint">将修改 Flutter 代码中的 JcEnv 配置</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="versionName">版本号：</label>
+                    <input 
+                        type="text" 
+                        id="versionName" 
+                        placeholder="例如: 1.1.0 (留空则不修改)"
+                        value=""
+                        style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px;"
+                    >
+                    <small class="hint">如果填写，将修改 iOS 和 Android 项目的版本号</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="versionCode">Build 号：</label>
+                    <input 
+                        type="text" 
+                        id="versionCode" 
+                        placeholder="例如: 100 (留空则不修改)"
+                        value=""
+                        style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px;"
+                    >
+                    <small class="hint">如果填写，将修改 iOS 和 Android 项目的 Build 号</small>
+                </div>
+
+                <div class="form-group">
                     <button type="button" id="buildBtn" class="btn-build" disabled>开始打包</button>
                 </div>
             </div>

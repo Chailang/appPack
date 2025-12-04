@@ -16,6 +16,15 @@ const output = document.getElementById('output');
 
 let currentProjectTypes = [];
 let currentProjectInfo = {};
+let lastProjectPath = ''; // 记录上次的项目路径
+
+// 清空版本号和 Build 号
+function clearVersionInputs() {
+    const versionNameInput = document.getElementById('versionName');
+    const versionCodeInput = document.getElementById('versionCode');
+    if (versionNameInput) versionNameInput.value = '';
+    if (versionCodeInput) versionCodeInput.value = '';
+}
 
 // 检查项目
 async function checkProject() {
@@ -106,6 +115,9 @@ async function startBuild() {
     const projectPath = projectPathInput.value.trim();
     const outputPath = outputPathInput.value.trim();
     const buildType = document.querySelector('input[name="buildType"]:checked').value;
+    const envType = document.querySelector('input[name="envType"]:checked').value;
+    const versionName = document.getElementById('versionName').value.trim();
+    const versionCode = document.getElementById('versionCode').value.trim();
 
     if (!projectPath) {
         alert('请输入项目路径');
@@ -156,7 +168,7 @@ async function startBuild() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ projectPath, outputPath, buildType }),
+            body: JSON.stringify({ projectPath, outputPath, buildType, envType, versionName, versionCode }),
         });
 
         if (!startResponse.ok) {
@@ -217,8 +229,13 @@ async function startBuild() {
                 }
 
                 // 如果完成，显示最终结果
-                if (data.status === 'completed' || data.status === 'failed') {
-                    eventSource.close();
+                if (data.status === 'completed' || data.status === 'failed' || data.completed) {
+                    // 延迟关闭，确保所有消息都已接收
+                    setTimeout(() => {
+                        if (eventSource) {
+                            eventSource.close();
+                        }
+                    }, 500);
                     displayBuildResults({
                         success: data.status === 'completed',
                         results: data.results,
@@ -234,10 +251,19 @@ async function startBuild() {
 
         eventSource.onerror = (error) => {
             console.error('SSE连接错误:', error);
-            eventSource.close();
-            output.innerHTML += '<div class="error">❌ 连接中断，请检查服务器状态</div>';
-            buildBtn.disabled = false;
-            buildBtn.textContent = '开始打包';
+            // 检查是否是正常关闭（readyState 为 2 表示已关闭）
+            if (eventSource.readyState === EventSource.CLOSED) {
+                // 连接已正常关闭，可能是打包完成后的正常关闭
+                // 不显示错误信息，因为可能已经收到了完成消息
+                console.log('SSE连接已正常关闭');
+            } else {
+                // 连接异常中断
+                console.error('SSE连接异常中断');
+                eventSource.close();
+                output.innerHTML += '<div class="error">❌ 连接中断，请检查服务器状态</div>';
+                buildBtn.disabled = false;
+                buildBtn.textContent = '开始打包';
+            }
         };
 
     } catch (error) {
@@ -422,7 +448,12 @@ async function showPathSelector(type, currentValue) {
         window.selectDirectory = (fullPath) => {
             // 自动选择
             if (type === 'project') {
+                // 如果项目路径改变，清空版本号和 Build 号
+                if (projectPathInput.value !== fullPath) {
+                    clearVersionInputs();
+                }
                 projectPathInput.value = fullPath;
+                lastProjectPath = fullPath;
             } else {
                 outputPathInput.value = fullPath;
             }
@@ -433,7 +464,12 @@ async function showPathSelector(type, currentValue) {
         window.selectPath = (path) => {
             // 自动选择
             if (type === 'project') {
+                // 如果项目路径改变，清空版本号和 Build 号
+                if (projectPathInput.value !== path) {
+                    clearVersionInputs();
+                }
                 projectPathInput.value = path;
+                lastProjectPath = path;
             } else {
                 outputPathInput.value = path;
             }
@@ -533,8 +569,35 @@ configBtn.addEventListener('click', async () => {
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         `;
         
+        // 获取 IP 信息
+        let ipInfoHtml = '<div style="margin-bottom: 20px; padding: 15px; background: #f0f7ff; border-radius: 8px; border: 1px solid #667eea;">';
+        ipInfoHtml += '<h3 style="color: #555; margin-bottom: 10px;">📡 当前 IP 信息（用于 Lark 白名单设置）</h3>';
+        ipInfoHtml += '<div id="ipInfo" style="color: #666; font-size: 14px;">正在获取 IP 信息...</div>';
+        ipInfoHtml += '<div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 6px; font-size: 12px; color: #888;">';
+        ipInfoHtml += '<strong>💡 提示：</strong>如果 IP 会变化，建议：<br>';
+        ipInfoHtml += '1. 不使用白名单（如果安全要求不高）<br>';
+        ipInfoHtml += '2. 使用内网 IP（如果在同一局域网）<br>';
+        ipInfoHtml += '3. 使用动态域名服务（DDNS）<br>';
+        ipInfoHtml += '4. 定期手动更新白名单';
+        ipInfoHtml += '</div>';
+        ipInfoHtml += '</div>';
+        
+        // 添加 Lark Webhook 配置
+        let larkConfigHtml = '<div style="margin-bottom: 30px;">';
+        larkConfigHtml += '<h3 style="color: #555; margin-bottom: 15px;">📨 Lark 机器人配置</h3>';
+        larkConfigHtml += '<div style="margin-bottom: 10px;">';
+        larkConfigHtml += '<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #555;">Lark Webhook URL：</label>';
+        larkConfigHtml += `<input type="text" id="larkWebhookUrl" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value="${escapeHtml(config.larkWebhookUrl || '')}" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-family: monospace; font-size: 12px;">`;
+        larkConfigHtml += '<small style="color: #999; font-size: 12px; display: block; margin-top: 5px;">在 Lark 群组中添加"自定义机器人"获取 Webhook URL</small>';
+        larkConfigHtml += '</div>';
+        larkConfigHtml += '</div>';
+        
         modalContent.innerHTML = `
-            <h2 style="color: #667eea; margin-bottom: 20px;">⚙️ 路径配置管理</h2>
+            <h2 style="color: #667eea; margin-bottom: 20px;">⚙️ 配置管理</h2>
+            
+            ${ipInfoHtml}
+            
+            ${larkConfigHtml}
             
             <div style="margin-bottom: 30px;">
                 <h3 style="color: #555; margin-bottom: 15px;">项目路径列表</h3>
@@ -576,6 +639,33 @@ configBtn.addEventListener('click', async () => {
         
         modal.appendChild(modalContent);
         document.body.appendChild(modal);
+        
+        // 获取并显示 IP 信息
+        fetch(`${API_BASE}/ip-info`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let ipInfoText = '';
+                    if (data.publicIP) {
+                        ipInfoText += `<strong>🌐 公网 IP：</strong><code style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace;">${escapeHtml(data.publicIP)}</code><br>`;
+                    }
+                    if (data.localIPs && data.localIPs.length > 0) {
+                        ipInfoText += '<strong>🏠 内网 IP：</strong>';
+                        data.localIPs.forEach((ip, index) => {
+                            ipInfoText += `<code style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; margin-left: 5px;">${escapeHtml(ip.address)}</code>`;
+                        });
+                    }
+                    if (!data.publicIP && (!data.localIPs || data.localIPs.length === 0)) {
+                        ipInfoText += '<span style="color: #f48771;">无法获取 IP 信息</span>';
+                    }
+                    document.getElementById('ipInfo').innerHTML = ipInfoText;
+                } else {
+                    document.getElementById('ipInfo').innerHTML = '<span style="color: #f48771;">获取 IP 信息失败</span>';
+                }
+            })
+            .catch(error => {
+                document.getElementById('ipInfo').innerHTML = '<span style="color: #f48771;">获取 IP 信息失败: ' + escapeHtml(error.message) + '</span>';
+            });
         
         // 添加路径
         window.addPath = async (type) => {
@@ -639,8 +729,7 @@ configBtn.addEventListener('click', async () => {
         
         // 保存配置
         document.getElementById('saveConfigBtn').addEventListener('click', async () => {
-            const projectBasePath = document.getElementById('projectBasePathInput').value.trim();
-            const outputBasePath = document.getElementById('outputBasePathInput').value.trim();
+            const larkWebhookUrl = document.getElementById('larkWebhookUrl') ? document.getElementById('larkWebhookUrl').value.trim() : '';
             
             try {
                 const response = await fetch(`${API_BASE}/config`);
@@ -651,10 +740,12 @@ configBtn.addEventListener('click', async () => {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            projectBasePath,
-                            outputBasePath,
+                            projectBasePath: data.config.projectBasePath || '',
+                            outputBasePath: data.config.outputBasePath || '',
                             projectPaths: data.config.projectPaths || [],
-                            outputPaths: data.config.outputPaths || []
+                            outputPaths: data.config.outputPaths || [],
+                            gitPassphrase: data.config.gitPassphrase || '712712',
+                            larkWebhookUrl: larkWebhookUrl
                         })
                     });
                     
@@ -689,6 +780,23 @@ configBtn.addEventListener('click', async () => {
 // 事件监听
 checkBtn.addEventListener('click', checkProject);
 buildBtn.addEventListener('click', startBuild);
+
+// 监听项目路径变化，清空版本号和 Build 号
+projectPathInput.addEventListener('change', () => {
+    const currentPath = projectPathInput.value.trim();
+    if (currentPath && currentPath !== lastProjectPath) {
+        clearVersionInputs();
+        lastProjectPath = currentPath;
+    }
+});
+
+projectPathInput.addEventListener('input', () => {
+    const currentPath = projectPathInput.value.trim();
+    if (currentPath && currentPath !== lastProjectPath) {
+        clearVersionInputs();
+        lastProjectPath = currentPath;
+    }
+});
 
 // 回车键检查项目
 projectPathInput.addEventListener('keypress', (e) => {
