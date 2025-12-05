@@ -8,5 +8,7 @@
     "/Users/chaiweidong/Desktop/jucom-work/tool/打包工具/output"
   ],
   "gitPassphrase": "712712",
-  "larkWebhookUrl": "https://open.larksuite.com/open-apis/bot/v2/hook/69a4732c-f817-4cdd-85aa-3cf2dd7cc562"
+  "larkWebhookUrl": "https://open.larksuite.com/open-apis/bot/v2/hook/69a4732c-f817-4cdd-85aa-3cf2dd7cc562",
+  "larkAppId": "cli_a9bb2fcb34389ed3",
+  "larkAppSecret": "iYr1SUlUSARBX3eI9kOoifnuiqPhwFFr"
 }
