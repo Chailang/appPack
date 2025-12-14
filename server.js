@@ -687,6 +687,26 @@ function buildIOSWithProgress(projectPath, outputPath, sessionId, callback) {
     const exportDir = path.join(buildDir, 'export');
     if (!fs.existsSync(exportDir)) {
       fs.mkdirSync(exportDir, { recursive: true });
+    } else {
+      // 清理旧的IPA文件，避免复制到输出目录
+      try {
+        const cleanOldIPAFiles = (dir) => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isFile() && entry.name.endsWith('.ipa')) {
+              fs.unlinkSync(fullPath);
+              addLog('info', `已删除旧的IPA文件: ${entry.name}`);
+            } else if (entry.isDirectory()) {
+              cleanOldIPAFiles(fullPath);
+            }
+          }
+        };
+        cleanOldIPAFiles(exportDir);
+        addLog('info', '已清理export目录中的旧IPA文件');
+      } catch (cleanError) {
+        addLog('warning', `清理旧IPA文件时出错: ${cleanError.message}，继续执行...`);
+      }
     }
     
     const exportOptionsPath = path.join(buildDir, 'ExportOptions.plist');
@@ -941,6 +961,26 @@ function buildIOS(projectPath, outputPath, callback) {
     const exportDir = path.join(buildDir, 'export');
     if (!fs.existsSync(exportDir)) {
       fs.mkdirSync(exportDir, { recursive: true });
+    } else {
+      // 清理旧的IPA文件，避免复制到输出目录
+      try {
+        const cleanOldIPAFiles = (dir) => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isFile() && entry.name.endsWith('.ipa')) {
+              fs.unlinkSync(fullPath);
+              console.log(`已删除旧的IPA文件: ${entry.name}`);
+            } else if (entry.isDirectory()) {
+              cleanOldIPAFiles(fullPath);
+            }
+          }
+        };
+        cleanOldIPAFiles(exportDir);
+        console.log('已清理export目录中的旧IPA文件');
+      } catch (cleanError) {
+        console.warn(`清理旧IPA文件时出错: ${cleanError.message}，继续执行...`);
+      }
     }
     
     // 创建ExportOptions.plist文件（用于导出IPA）
